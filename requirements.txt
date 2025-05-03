@@ -1,0 +1,8 @@
+fastapi>=0.70.0
+uvicorn>=0.15.0
+pydantic>=1.8.2
+SQLAlchemy>=1.4.27
+python-dotenv>=0.19.2
+openai>=0.27.0
+twilio>=7.0.0
+# Vapi SDK would typically be added here
