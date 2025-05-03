@@ -34,6 +34,8 @@ flowchart TD
     VAPI_Riley -- "POST /api/hospital_conversation" --> FastAPI
     FastAPI -->|confirmation| Twilio
 
+---
+
 ## 📁 Repository Layout
 
 | Path                     | Purpose                                                      |
