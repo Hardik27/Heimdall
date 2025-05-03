@@ -8,6 +8,8 @@ Tofia is a FastAPI application that:
 3. Spawns a second VAPI assistant (**Riley**) to call the hospital and book the earliest appointment  
 4. Sends an SMS confirmation (Twilio) when the appointment is secured
 
+---
+
 ## 📁 Repository Layout
 
 | Path                     | Purpose                                                      |
@@ -22,9 +24,10 @@ Tofia is a FastAPI application that:
 | `update_vapi_webhooks.py`| Script to PATCH VAPI assistants to `custom_server` mode     |
 | `.env.example`          | Template environment config                                  |
 
+---
+
 ## 🔐 `.env` Template
 
-```dotenv
 ### FastAPI ###
 HOST=0.0.0.0
 PORT=8000
@@ -54,6 +57,8 @@ TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TOFIA_PHONE_NUMBER=<PATIENT_ASSISTANT_PHONE_NUMBER>
 
+---
+
 ## ⚙️ Local Setup (Python 3.10+)
 
 git clone https://github.com/your-org/tofia.git
@@ -61,6 +66,7 @@ cd tofia
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
+---
 
 ## 🖼 Architecture
 
