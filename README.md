@@ -56,7 +56,7 @@ TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TOFIA_PHONE_NUMBER=<PATIENT_ASSISTANT_PHONE_NUMBER>
 
-
+---
 
 ## ⚙️ Local Setup (Python 3.10+)
 
@@ -65,7 +65,6 @@ git clone https://github.com/your-org/tofia.git
 cd tofia
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
 
 ---
 
