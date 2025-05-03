@@ -12,330 +12,142 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Try to import Vapi SDK, but it's optional
-try:
-    import vapi
-    VAPI_SDK_AVAILABLE = True
-    logger.info("Vapi SDK imported successfully")
-except ImportError:
-    VAPI_SDK_AVAILABLE = False
-    logger.warning("Real Vapi SDK not found, falling back to mock implementation")
+# Force mock mode to avoid Vapi SDK pydantic compatibility issues
+VAPI_SDK_AVAILABLE = False
+logger.warning("Forcing mock implementation to avoid Vapi SDK compatibility issues")
 
-# Import real Vapi if not in mock mode
-if hasattr(config, 'MOCK_MODE') and not config.MOCK_MODE:
-    try:
-        # Try to import the real Vapi SDK
-        import vapi
-        logger.info("Using real Vapi SDK")
-    except ImportError:
-        logger.warning("Real Vapi SDK not found, falling back to mock implementation")
-        # Mock Vapi implementation for demonstration purposes
-        class MockVapi:
-            """Mock implementation of Vapi SDK client."""
+# Skip Vapi SDK import attempt completely
+# Define mock Vapi class directly
+class MockVapi:
+    """Mock implementation of Vapi SDK client."""
+
+    class Calls:
+        def __init__(self):
+            self.active_calls = {}
             
-            class Client:
-                def __init__(self, api_key=None):
-                    self.api_key = api_key
-                    self.calls = self.Calls()
+        def create(self, to=None, from_=None, webhook_url=None, context=None, **kwargs):
+            """
+            Legacy method for creating an outbound call.
+            For compatibility with old code.
+            
+            Args:
+                to: The phone number to call
+                from_: The phone number to call from
+                webhook_url: The URL to call when events happen
+                context: Additional context for the call
                 
-                def create_phone_call(self, **kwargs):
-                    """
-                    Create an outbound phone call according to Vapi documentation.
-                    
-                    Args:
-                        to (str): The phone number to call
-                        from (str): The phone number to call from
-                        webhook_url (str): The URL to receive events
-                        assistant (dict): Assistant configuration
-                        metadata (dict, optional): Additional context for the call
-                        
-                    Returns:
-                        object: A mock response object with call_id
-                    """
-                    to = kwargs.get('to')
-                    from_number = kwargs.get('from')
-                    webhook_url = kwargs.get('webhook_url')
-                    assistant = kwargs.get('assistant', {})
-                    metadata = kwargs.get('metadata', {})
-                    
-                    logger.info(f"MOCK MODE: Creating outbound call from {from_number} to {to}")
-                    logger.info(f"MOCK MODE: Assistant config: {assistant.get('name', 'Unnamed')}")
-                    
-                    # Create a mock call_id
-                    call_id = f"MOCK_CALL_{int(time.time())}"
-                    
-                    # Create a mock response object
-                    response = type('obj', (object,), {
-                        'call_id': call_id,
-                        'status': 'queued',
-                        'to': to,
-                        'from': from_number,
-                        'webhook_url': webhook_url,
-                        'metadata': metadata
-                    })
-                    
-                    return response
-                
-                class Calls:
-                    def __init__(self):
-                        self.active_calls = {}
-                    
-                    def create(self, to=None, from_=None, webhook_url=None, context=None, **kwargs):
-                        """
-                        Legacy method for creating an outbound call.
-                        For compatibility with old code.
-                        
-                        Args:
-                            to: The phone number to call
-                            from_: The phone number to call from
-                            webhook_url: The URL to call when events happen
-                            context: Additional context for the call
-                            
-                        Returns:
-                            dict: A mock call response with call_sid
-                        """
-                        logger.warning("DEPRECATED: Using legacy calls.create() method. Use create_phone_call() instead.")
-                        call_sid = f"MOCK_CALL_{int(time.time())}"
-                        logger.info(f"MOCK MODE: Creating call from {from_} to {to} with SID {call_sid}")
-                        
-                        # Store call data
-                        self.active_calls[call_sid] = {
-                            "to": to,
-                            "from": from_,
-                            "webhook_url": webhook_url,
-                            "context": context,
-                            "status": "queued",
-                            "created_at": datetime.utcnow()
-                        }
-                        
-                        return {"call_sid": call_sid, "status": "queued"}
-                    
-                    def get(self, call_sid):
-                        """
-                        Get information about a call.
-                        
-                        Args:
-                            call_sid: The call SID
-                            
-                        Returns:
-                            dict: Call information
-                        """
-                        if call_sid in self.active_calls:
-                            return self.active_calls[call_sid]
-                        return {"error": "Call not found"}
-                    
-                    def send_message(self, call_sid, text):
-                        """
-                        Send a message to a call.
-                        
-                        Args:
-                            call_sid: The call SID
-                            text: The text message to send
-                            
-                        Returns:
-                            dict: Response with success status
-                        """
-                        logger.info(f"MOCK MODE: Sending message to call {call_sid}: {text[:30]}...")
-                        
-                        if call_sid in self.active_calls:
-                            # In a real implementation, this would send a message to the call
-                            # For now, just log it
-                            if "messages" not in self.active_calls[call_sid]:
-                                self.active_calls[call_sid]["messages"] = []
-                            
-                            self.active_calls[call_sid]["messages"].append({
-                                "text": text,
-                                "timestamp": datetime.utcnow()
-                            })
-                            
-                            return {"success": True, "message": "Message sent successfully"}
-                        
-                        return {"success": False, "error": "Call not found"}
-                    
-                    def get_transcript(self, call_sid):
-                        """
-                        Get the transcript for a call.
-                        
-                        Args:
-                            call_sid: The call SID
-                            
-                        Returns:
-                            dict: Transcript information
-                        """
-                        if call_sid in self.active_calls:
-                            return {"messages": self.active_calls[call_sid].get("messages", [])}
-                        return {"error": "Call not found"}
-                    
-                    def end(self, call_sid):
-                        """
-                        End a call.
-                        
-                        Args:
-                            call_sid: The call SID
-                            
-                        Returns:
-                            bool: Success status
-                        """
-                        if call_sid in self.active_calls:
-                            self.active_calls[call_sid]["status"] = "ended"
-                            return True
-                        return False
+            Returns:
+                dict: A mock call response with call_sid
+            """
+            call_sid = f"mock-sid-{int(time.time())}"
+            logger.info(f"MOCK: Created outbound call to {to} with SID {call_sid}")
+            self.active_calls[call_sid] = {
+                "to": to,
+                "from": from_,
+                "status": "in-progress",
+                "created_at": datetime.now().isoformat(),
+                "context": context or {}
+            }
+            return {"call_sid": call_sid, "status": "queued"}
         
-        vapi = MockVapi
-else:
-    # Mock Vapi implementation for demonstration purposes
-    class MockVapi:
-        """Mock implementation of Vapi SDK client."""
+        def get(self, call_sid):
+            """
+            Get information about a call.
+            
+            Args:
+                call_sid: The call SID
+                
+            Returns:
+                dict: Call information
+            """
+            if call_sid in self.active_calls:
+                return self.active_calls[call_sid]
+            return {"error": "Call not found", "status": "failed"}
         
-        class Client:
-            def __init__(self, api_key=None):
-                self.api_key = api_key
-                self.calls = self.Calls()
+        def send_message(self, call_sid, text):
+            """
+            Send a message to a call.
             
-            def create_phone_call(self, **kwargs):
-                """
-                Create an outbound phone call according to Vapi documentation.
+            Args:
+                call_sid: The call SID
+                text: The text message to send
                 
-                Args:
-                    to (str): The phone number to call
-                    from (str): The phone number to call from
-                    webhook_url (str): The URL to receive events
-                    assistant (dict): Assistant configuration
-                    metadata (dict, optional): Additional context for the call
-                    
-                Returns:
-                    object: A mock response object with call_id
-                """
-                to = kwargs.get('to')
-                from_number = kwargs.get('from')
-                webhook_url = kwargs.get('webhook_url')
-                assistant = kwargs.get('assistant', {})
-                metadata = kwargs.get('metadata', {})
-                
-                logger.info(f"MOCK MODE: Creating outbound call from {from_number} to {to}")
-                logger.info(f"MOCK MODE: Assistant config: {assistant.get('name', 'Unnamed')}")
-                
-                # Create a mock call_id
-                call_id = f"MOCK_CALL_{int(time.time())}"
-                
-                # Create a mock response object
-                response = type('obj', (object,), {
-                    'call_id': call_id,
-                    'status': 'queued',
-                    'to': to,
-                    'from': from_number,
-                    'webhook_url': webhook_url,
-                    'metadata': metadata
-                })
-                
-                return response
+            Returns:
+                dict: Response with success status
+            """
+            logger.info(f"MOCK: Sent message to call {call_sid}: {text}")
+            return {"success": True, "message": "Message sent"}
+        
+        def get_transcript(self, call_sid):
+            """
+            Get the transcript for a call.
             
-            class Calls:
-                def __init__(self):
-                    self.active_calls = {}
+            Args:
+                call_sid: The call SID
                 
-                def create(self, to=None, from_=None, webhook_url=None, context=None, **kwargs):
-                    """
-                    Legacy method for creating an outbound call.
-                    For compatibility with old code.
-                    
-                    Args:
-                        to: The phone number to call
-                        from_: The phone number to call from
-                        webhook_url: The URL to call when events happen
-                        context: Additional context for the call
-                        
-                    Returns:
-                        dict: A mock call response with call_sid
-                    """
-                    logger.warning("DEPRECATED: Using legacy calls.create() method. Use create_phone_call() instead.")
-                    call_sid = f"MOCK_CALL_{int(time.time())}"
-                    logger.info(f"MOCK MODE: Creating call from {from_} to {to} with SID {call_sid}")
-                    
-                    # Store call data
-                    self.active_calls[call_sid] = {
-                        "to": to,
-                        "from": from_,
-                        "webhook_url": webhook_url,
-                        "context": context,
-                        "status": "queued",
-                        "created_at": datetime.utcnow()
-                    }
-                    
-                    return {"call_sid": call_sid, "status": "queued"}
+            Returns:
+                dict: Transcript information
+            """
+            logger.info(f"MOCK: Retrieved transcript for call {call_sid}")
+            return {
+                "call_sid": call_sid,
+                "transcript": [
+                    {"speaker": "assistant", "text": "Hello, how can I help you today?"},
+                    {"speaker": "human", "text": "I'd like to schedule a doctor's appointment."},
+                    {"speaker": "assistant", "text": "I can help with that. What kind of appointment do you need?"}
+                ]
+            }
+        
+        def end(self, call_sid):
+            """
+            End a call.
+            
+            Args:
+                call_sid: The call SID
                 
-                def get(self, call_sid):
-                    """
-                    Get information about a call.
-                    
-                    Args:
-                        call_sid: The call SID
-                        
-                    Returns:
-                        dict: Call information
-                    """
-                    if call_sid in self.active_calls:
-                        return self.active_calls[call_sid]
-                    return {"error": "Call not found"}
-                
-                def send_message(self, call_sid, text):
-                    """
-                    Send a message to a call.
-                    
-                    Args:
-                        call_sid: The call SID
-                        text: The text message to send
-                        
-                    Returns:
-                        dict: Response with success status
-                    """
-                    logger.info(f"MOCK MODE: Sending message to call {call_sid}: {text[:30]}...")
-                    
-                    if call_sid in self.active_calls:
-                        # In a real implementation, this would send a message to the call
-                        # For now, just log it
-                        if "messages" not in self.active_calls[call_sid]:
-                            self.active_calls[call_sid]["messages"] = []
-                        
-                        self.active_calls[call_sid]["messages"].append({
-                            "text": text,
-                            "timestamp": datetime.utcnow()
-                        })
-                        
-                        return {"success": True, "message": "Message sent successfully"}
-                    
-                    return {"success": False, "error": "Call not found"}
-                
-                def get_transcript(self, call_sid):
-                    """
-                    Get the transcript for a call.
-                    
-                    Args:
-                        call_sid: The call SID
-                        
-                    Returns:
-                        dict: Transcript information
-                    """
-                    if call_sid in self.active_calls:
-                        return {"messages": self.active_calls[call_sid].get("messages", [])}
-                    return {"error": "Call not found"}
-                
-                def end(self, call_sid):
-                    """
-                    End a call.
-                    
-                    Args:
-                        call_sid: The call SID
-                        
-                    Returns:
-                        bool: Success status
-                    """
-                    if call_sid in self.active_calls:
-                        self.active_calls[call_sid]["status"] = "ended"
-                        return True
-                    return False
+            Returns:
+                bool: Success status
+            """
+            if call_sid in self.active_calls:
+                self.active_calls[call_sid]["status"] = "completed"
+                logger.info(f"MOCK: Ended call {call_sid}")
+                return True
+            logger.warning(f"MOCK: Tried to end non-existent call {call_sid}")
+            return False
     
-    vapi = MockVapi
+    class Client:
+        def __init__(self, api_key=None):
+            self.api_key = api_key
+            self.calls = MockVapi.Calls()
+        
+        def create_phone_call(self, **kwargs):
+            """
+            Create an outbound phone call according to Vapi documentation.
+            
+            Args:
+                to (str): The phone number to call
+                from (str): The phone number to call from
+                webhook_url (str): The URL to receive events
+                assistant (dict): Assistant configuration
+                metadata (dict, optional): Additional context for the call
+                
+            Returns:
+                object: A mock response object with call_id
+            """
+            call_id = f"mock-call-{int(time.time())}"
+            logger.info(f"MOCK: Created outbound call to {kwargs.get('to')} with ID {call_id}")
+            return {"call_id": call_id, "status": "queued"}
+
+# Create an instance of MockVapi for use by the application
+class MockVapiInstance:
+    def __init__(self):
+        pass
+    
+    def Client(self, api_key=None):
+        return MockVapi.Client(api_key)
+
+# Use the MockVapiInstance for all operations
+vapi = MockVapiInstance()
 
 
 class TelephonyHandler:
@@ -401,7 +213,7 @@ class TelephonyHandler:
             
             # Use the most basic format possible
             data = {
-                "assistantId": "Tofia",
+                "assistantId": "df614dd4-b4ef-4107-91c9-5fe855949c7b",
                 "phoneNumberId": "70cedc36-4d83-4256-afda-69f282085f10",
                 "customer": {
                     "number": phone_number  # Use the phone number passed to the function instead of hardcoding

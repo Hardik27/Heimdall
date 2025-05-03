@@ -1,65 +1,25 @@
-You are an expert Python engineer building a voice-assistant backend for healthcare. Follow these requirements carefully:
+When implementing Tofia’s backend in code (especially if using AI code assistants like Cursor or Windsurf), developers should enforce certain guidelines to ensure the system remains modular, extensible, and secure. Below is a “rulebook” of best practices that the AI coding assistant (and human developers) must follow:
+	1.	Modular Structure: Organize code into clear modules/classes corresponding to the architecture components:
+	•	Telephony Interface Module (e.g. CallHandler or TelephonyService): Manages Vapi call events, Twilio SMS sending, etc.
+	•	Conversation Module (e.g. ConversationAgent or DialogueManager): Handles interactions with GPT-4, including constructing prompts and processing responses for both patient and hospital contexts.
+	•	Memory Module (e.g. MemoryStore or DatabaseClient): Responsible for storing and retrieving caller info and call records. This should be abstracted so that it can be backed by a real database (PostgreSQL, etc.) but easily swapped or mocked.
+	•	Orchestration/Scheduling Module (could be part of Conversation or separate CallOrchestrator): Encapsulate the logic that sequences the patient call -> hospital call -> SMS flow.
+Each module should have a single responsibility and expose clean methods or interfaces to the others. For example, the Conversation module might expose generate_patient_response(caller_id, user_utterance) and generate_receptionist_response(caller_id, receptionist_utterance) methods, which internally handle prompt creation and call the LLM.
+	2.	Extensible Design: Use interfaces or abstract base classes where appropriate. For instance, define an interface for the LLM integration (so that in future, switching from OpenAI’s API to another model or local LLM is easy). Similarly, design the Telephony interface to be adaptable (if later moving from Vapi to Twilio Voice or another provider, the rest of the code shouldn’t break). Avoid hard-coding service-specific logic across the codebase; centralize it in the respective module.
+	3.	Configuration and Constants: All environment-specific details (API keys, phone numbers, model names, etc.) should be in a config file or environment variables, not scattered in code. For example, Twilio SID/auth, OpenAI API keys, database connection strings, and the phone numbers for Tofia and hospitals should be loaded from config. This makes the code base easier to maintain and deploy in different environments (dev, staging, prod) without code changes.
+	4.	Clear Prompts and Personas: Store the system prompts (for GPT-4 agents) as separate template strings or files, not hardcoded deep in logic. This allows easy iteration on prompt wording without altering code flow. For example, have a prompts.py with PATIENT_AGENT_PROMPT and HOSPITAL_AGENT_PROMPT templates where placeholders can be filled in (like patient name or requested appointment) before sending to GPT. Document in comments what each prompt is intended to do.
+	5.	Memory Persistence: Ensure that any critical patient data or state collected during the call is saved to the memory store as soon as possible, to avoid loss in case of crashes. For instance, once we get the patient’s name and reason for call, write it to the DB (even if the call hasn’t completed yet). Similarly, after the hospital call, save the appointment info. Implement transactions or error-checks for DB operations. If using an ORM (like SQLAlchemy or Django ORM), define clear models for callers and call records. Include timestamps and maybe a relationship between caller and their calls. This persistent layer guarantees that even if the service restarts, previous interactions are not lost.
+	6.	State Management: During a live call, if the conversation is managed turn-by-turn by the Python backend, use a lightweight state machine or state object to track progress (e.g., state = { 'got_name': True, 'got_insurance': False, ... }). This can be part of the Conversation module. For example, if GPT-4’s response indicates the user provided their name, update state['got_name']=True. This state can guide subsequent turns or be used to verify all required slots are filled. (When using Vapi’s internal loop with a single prompt, we ensure the prompt logic itself handles this, but having an explicit state tracker is useful for complex logic and debugging.)
+	7.	Error Handling and Fallbacks: The code should anticipate and handle exceptions or API failures gracefully. For instance, if the OpenAI API call fails or times out, have a retry mechanism or default apology response. If the telephony API fails to place an outbound call, log the error and possibly notify an admin. Use try/except blocks around external API calls (GPT-4, Vapi, Twilio) and either retry or fail gracefully. This ensures the system is resilient and can recover or at least inform the user appropriately (maybe telling the patient “Sorry, something went wrong” and logging the incident).
+	8.	Logging and Monitoring: Implement structured logging in each module. For privacy, avoid logging sensitive content (or sanitize it – e.g., log “Patient provided insurance info [REDACTED]”). But do log key events: inbound call received, outbound call started, GPT prompt/response (maybe only store internally for debugging, since transcripts are PHI – ensure these logs are secure). Logging helps in debugging and auditing interactions, which is important in healthcare. Also consider metrics: count of calls handled, response latency, etc., which can be gathered for monitoring performance.
+	9.	Privacy & Security (HIPAA): This is crucial. Ensure that all patient data is handled per HIPAA guidelines:
+	•	Use secure protocols (HTTPS for webhooks, TLS for DB connections).
+	•	Do not expose patient-identifiable info in any third-party service that isn’t HIPAA-compliant. For example, if using OpenAI’s API directly, be cautious as OpenAI is not officially HIPAA-compliant. If needed, use Azure OpenAI (with a BAA) or another HIPAA-ready LLM service. Alternatively, consider an on-premise LLM when scaling up to real PHI. For the scope of this design, we assume proper agreements are in place or data is sufficiently abstracted.
+	•	Implement access controls for the data store – only authorized processes or users can read/write the call records.
+	•	If storing call recordings or full transcripts, encrypt them and restrict access, or avoid storing raw audio altogether. Our memory likely stores summaries or key fields rather than verbatim conversation (reducing sensitive surface area).
+	•	Include a privacy notice in the code repository for developers and perhaps have the system play a brief disclaimer for callers if required (e.g., “This call may be handled by an automated assistant. Please do not share unnecessary sensitive information.”).
+	10.	Documentation and Readability: The code should be well-documented. Each class and function should have a clear docstring explaining its purpose. Complex logic should have inline comments. For example, comment the prompt crafting logic to explain why we include certain instructions. This will help future developers (or even AI assistants) to quickly grasp the structure and modify if needed. Also document any design decisions, like how we use the vector store for memory or how we chose certain thresholds (e.g., when deciding to end the patient call).
+	11.	Testing and Modularity: Design components so they can be unit-tested in isolation. For instance, make the GPT-4 interface injectable or have a toggle to use a stub model for tests (to avoid calling the real API). Test that the memory store correctly saves and retrieves data. Test the conversation logic with various simulated inputs (like a sequence of user answers) to ensure it asks for all required info. A modular design with clear interfaces makes it easier to write such tests. Aim for a code structure where you could potentially swap the real services with dummy functions to run end-to-end tests (e.g., simulate a call flow in a test environment without actual phone calls).
+	12.	Extensibility for Future Features: Keep in mind future integration points. For instance, design the CallOrchestrator to have hooks or methods that could be extended to integrate with an EMR. Maybe have a method schedule_appointment(patient_info) that currently dials the hospital, but later could check an API – if the API is available, it could bypass the call. By isolating this in one place, you make future enhancements easier. Similarly, if adding a RAG system, you might have a KnowledgeBase class with a method query(question) that you can call from the Conversation module when needed. Even if not implemented now, the code structure can leave stubs or at least make it straightforward to add.
 
-**Overview:** We are implementing "Tofia", an AI voice assistant for medical appointment scheduling. The system receives inbound calls from patients and makes outbound calls to hospital receptionists using Vapi.ai (a voice AI telephony platform). It also sends SMS confirmations via Twilio. The backend must be HIPAA-compliant, modular, and extensible.
-
-**Key Features to Implement:**
-
-1. **Telephony Handler (using Vapi SDK):**
-
-   - Handle inbound calls: When a call comes in on a Vapi number, use a webhook endpoint to process it. Identify the caller by phone number.
-   - For inbound calls, start a conversation with the patient via the AI assistant.
-   - Handle outbound calls: Use Vapi’s API/SDK to place calls to hospitals. Provide a separate AI assistant persona for these calls.
-   - Ensure the telephony module can receive events or transcripts from Vapi in real-time or after call completion.
-   - After an outbound call, capture the outcome (e.g., confirmed appointment details).
-
-2. **Conversation Agents (GPT-4 Integration):**
-
-   - **PatientAgent:** Manages dialogue with the patient. Use OpenAI GPT-4 to generate responses. Prompt it with a friendly, empathetic tone. It should gather intent (e.g., scheduling) and required info (name, DOB, insurance) if not already known.
-   - **HospitalAgent:** Manages dialogue with the receptionist. Also use GPT-4, but with a professional tone and all necessary patient info in the prompt. This agent should explicitly ask to book an appointment and respond to the receptionist’s queries.
-   - Use OpenAI’s Python API (openai package) to send messages to GPT-4. Structure the prompts with system and user messages as described.
-   - Ensure the ability to handle multi-turn conversation. (Hint: maintain `conversation_history` for each call and append new messages).
-
-3. **Memory Module (Database Persistence):**
-
-   - Use a simple database (SQLite or PostgreSQL via an ORM) to store caller profiles and call history.
-   - Schema: a `Caller` table (phone number as ID, name, etc.) and a `CallRecord` table (timestamp, caller_id, summary, maybe type of call).
-   - On an incoming call, lookup the Caller by phone. If not found, create a new record (first-time caller).
-   - Store key details from each call: e.g., the patient’s provided info and the appointment scheduled.
-   - Provide functions like `get_caller(phone)` and `save_call_record(caller, summary)`.
-
-4. **SMS Notification (Twilio API):**
-
-   - After successfully scheduling an appointment, use Twilio’s REST API (twilioClient) to send an SMS to the patient’s number with confirmation details.
-   - Make the SMS content clear and HIPAA-compliant (no overly sensitive info).
-
-5. **Orchestration Logic:**
-   - Tie everything together in a `VoiceAssistant` class or similar.
-   - Inbound call flow: trigger PatientAgent; when PatientAgent determines an appointment needs scheduling (intent identified and info collected), end the patient call gracefully.
-   - Then invoke HospitalAgent via an outbound Vapi call. (Option: you can simulate the conversation for now by calling HospitalAgent’s response generator in a loop with sample receptionist prompts, since fully integrating real phone for tests is hard).
-   - Once appointment info is obtained, send SMS to patient and store the call records in the DB.
-   - Ensure to log or print key steps for traceability (e.g., “Patient called, identified intent = schedule_appointment”, “Calling hospital…”, “Appointment confirmed”).
-   - Make sure each step handles errors: e.g., if GPT-4 API fails, handle exception and maybe retry or default a response; if Twilio SMS fails, log error.
-
-**Technical Requirements:**
-
-- Use Python 3.10+ with `fastapi` (for webhooks) or an equivalent lightweight HTTP server to receive Vapi webhooks for inbound calls and call status.
-- Use `pydantic` models or dataclasses for data structures (like Call data) where appropriate.
-- Use an ORM like `sqlalchemy` or Django ORM (if using Django) for the database, or even a simple dictionary for in-memory simulation (but structure code so it’s easy to swap in a real DB).
-- The code should be modular: define classes for each major component (TelephonyHandler, PatientAgent, HospitalAgent, MemoryStore, etc.). Each class should have clear methods as interface.
-- Write docstrings for classes and methods explaining their purpose, and inline comments for complex logic.
-- Maintain separation of concerns: e.g., the PatientAgent class shouldn’t directly access Twilio or DB – it should return info to the orchestrator which then calls the Memory or SMS modules.
-- Ensure compliance: do not print or log sensitive data (like full PHI) – if logging, redact or log high-level events only.
-
-**Structure:**
-You may produce multiple Python files or one file with sections. For simplicity, you can put everything in one `tofia_backend.py` file, but use distinct classes as described. Organize the code as:
-
-- imports
-- global configs (API keys, etc., which you can leave as placeholders)
-- database setup (for example, SQLAlchemy models or a simple in-memory dict)
-- class definitions (MemoryStore, PatientAgent, HospitalAgent, TelephonyHandler, VoiceAssistant, etc.)
-- if using FastAPI, define the webhook endpoints (e.g., `/incoming_call` for Vapi to post to)
-- main block to run the FastAPI app (if applicable).
-
-Given the complexity, you can mock certain interactions for now (for example, instead of making an actual outbound call in HospitalAgent, just simulate the conversation with predefined questions). Focus on showing the flow and module interactions.
-
-Now, **write the complete Python code** implementing the above. Make sure the code is clean, well-organized, and commented.
+By enforcing this rulebook, we ensure that the Python codebase for Tofia remains clean, maintainable, and scalable. The modular approach mirrors the architecture diagram, and each piece can evolve independently. Developers using AI code assistants will find that these guidelines help the AI produce code that is organized and adheres to our architectural vision, rather than entangling logic and making future changes difficult.
