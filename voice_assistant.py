@@ -9,6 +9,7 @@ from conversation_agents import PatientAgent, HospitalAgent
 from memory_module import MemoryStore
 from sms_notifications import SMSNotifier
 import config
+import json
 
 # Configure logging
 logging.basicConfig(
@@ -57,7 +58,7 @@ class VoiceAssistant:
             "start_time": datetime.utcnow()
         }
         
-        # Return Vapi configuration
+        # Return Vapi configuration to disable built-in assistant
         return self.telephony.handle_inbound_call(call_data)
     
     def process_patient_message(self, call_sid, message):
@@ -119,7 +120,7 @@ class VoiceAssistant:
                 )
             
             # Make a real call to the hospital - no simulation
-            logger.info(f"Initiating REAL hospital call for patient {agent.patient_info.get('name')}")
+            logger.info(f"Initiating hospital call for patient {agent.patient_info.get('name')}")
             self.handle_hospital_call(call_sid, phone_number, agent.patient_info)
             
             return {"response": response + next_steps, "end_call": True}
@@ -199,188 +200,85 @@ class VoiceAssistant:
             patient_call_sid: The Vapi call identifier for the inbound patient call
             patient_phone: The patient's phone number
             patient_info: Dictionary containing patient information
-            hospital_number: The hospital's phone number to call
-            hospital_name: Optional name of the hospital
+            hospital_number: The hospital's phone number
+            hospital_name: The hospital's name
             
         Returns:
-            dict: The appointment details if successful, None otherwise
+            dict: Appointment details if successful, None otherwise
         """
         try:
-            hospital_display = hospital_name or "the hospital"
-            logger.info(f"Placing outbound call to {hospital_display} at {hospital_number}")
+            logger.info(f"Placing outbound call to hospital at {hospital_number}")
             
-            # Prepare the callback context for the hospital call
-            # This will be passed as metadata to the outbound call per Vapi docs
-            metadata = {
+            # Create context for the hospital call
+            context = {
                 "patient_call_sid": patient_call_sid,
                 "patient_phone": patient_phone,
-                "callback_number": config.TOFIA_PHONE_NUMBER,
-                "hospital_name": hospital_name,
-                "patient_info": {
-                    "name": patient_info.get("name", ""),
-                    "dob": patient_info.get("dob", ""),
-                    "insurance": patient_info.get("insurance", ""),
-                    "insurance_id": patient_info.get("insurance_id", ""),
-                    "appointment_reason": patient_info.get("appointment_reason", ""),
-                    "zip_code": patient_info.get("zip_code", "")
-                }
+                "patient_info": patient_info,
+                "hospital_name": hospital_name
             }
             
-            # Custom first message for this specific hospital
-            first_message = f"Hello, this is Tofia calling from the automated appointment scheduling service. I'd like to schedule an appointment for {patient_info.get('name', 'a patient')} at {hospital_display}."
+            # Make the real outbound call
+            call_result = self.telephony.place_outbound_call(hospital_number, context)
             
-            # Place the outbound call using the updated telephony implementation
-            call_result = self.telephony.place_outbound_call(
-                phone_number=hospital_number,
-                context=metadata
-            )
-            
-            if not call_result or not call_result.get("call_sid"):
-                logger.error(f"Failed to place outbound call to {hospital_display}")
+            if not call_result:
+                logger.error(f"Failed to place call to hospital at {hospital_number}")
                 return None
                 
-            hospital_call_sid = call_result["call_sid"]
-            logger.info(f"Outbound call to {hospital_display} placed successfully: {hospital_call_sid}")
+            # Get the call SID for the hospital call
+            hospital_call_sid = call_result.get("call_sid")
             
-            # Initialize the hospital agent
+            if not hospital_call_sid:
+                logger.error("No call_sid returned for hospital call")
+                return None
+            
+            # Create hospital agent to handle the conversation
             hospital_agent = HospitalAgent(patient_info)
             
-            # Create a record for the hospital call
-            call_record = self.memory.create_call_record(
-                phone_number=hospital_number,
-                call_type="outbound",
-                call_sid=hospital_call_sid
+            # Store hospital call info
+            self.active_calls[hospital_call_sid] = {
+                "phone_number": hospital_number,
+                "type": "hospital",
+                "patient_call_sid": patient_call_sid,
+                "patient_phone": patient_phone,
+                "agent": hospital_agent,
+                "start_time": datetime.utcnow()
+            }
+            
+            # Create call record
+            self.memory.create_call_record(
+                patient_phone, 
+                "outbound", 
+                hospital_call_sid,
+                call_type="hospital"
             )
             
-            if call_record:
-                # Store the call record ID for later reference
-                logger.info(f"Created call record for hospital call: {call_record.id}")
-                
-                # Add to active calls
-                self.active_calls[hospital_call_sid] = {
-                    "call_sid": hospital_call_sid,
-                    "phone_number": hospital_number,
-                    "call_record_id": call_record.id,
-                    "state": "hospital_conversation",
-                    "hospital_agent": hospital_agent,
-                    "patient_call_sid": patient_call_sid,
-                    "hospital_name": hospital_name
-                }
+            logger.info(f"Initiated hospital call, SID: {hospital_call_sid}")
             
-            # Real-world implementation: Wait for the hospital to answer and handle the conversation
-            # For this simplified implementation, we'll use the mock hospital agent
-            if hasattr(config, 'MOCK_MODE') and config.MOCK_MODE:
-                logger.info(f"MOCK MODE: Simulating hospital conversation with {hospital_display}")
-                
-                # Simulate the hospital conversation
-                hospital_conversation = [
-                    "Hello, thank you for calling. How can I help you today?",
-                    f"Hello, I'm calling to schedule an appointment for {patient_info.get('name', 'a patient')} who is experiencing {patient_info.get('appointment_reason', 'medical issues')}.",
-                    "Can I get the patient's name and date of birth?",
-                    f"The patient's name is {patient_info.get('name', 'Unknown')} and their date of birth is {patient_info.get('dob', 'Unknown')}.",
-                    "What about insurance information?",
-                    f"The patient has {patient_info.get('insurance', 'Unknown')} insurance with ID {patient_info.get('insurance_id', 'Unknown')}.",
-                    "I see. We have an opening tomorrow at 2:30 PM with Dr. Smith. Would that work?",
-                    "Yes, that would be perfect. Thank you.",
-                    "Great, I'll confirm that appointment. Anything else you need?",
-                    "No, that's all. Thank you for your help."
-                ]
-                
-                # Simulate the conversation by calling the hospital agent for each message
-                for i in range(0, len(hospital_conversation), 2):
-                    if i+1 < len(hospital_conversation):
-                        hospital_message = hospital_conversation[i]
-                        tofia_response = hospital_conversation[i+1]
-                        
-                        # Generate the response (in mock mode, this will use _generate_mock_response)
-                        hospital_agent.generate_response(hospital_message)
-                        
-                        # Save the conversation
-                        if hospital_call_sid in self.active_calls and call_record:
-                            self.save_conversation_history(
-                                hospital_call_sid,
-                                "hospital",
-                                hospital_message,
-                                tofia_response
-                            )
-                
-                # Set the appointment details from the mock conversation
-                hospital_agent.appointment_info = {
-                    "date": "tomorrow",
-                    "time": "2:30 PM",
-                    "doctor": "Dr. Smith",
-                    "appointment_confirmed": True,
-                    "hospital_name": hospital_name
-                }
-                
-                # Update the state to indicate the appointment is confirmed
-                hospital_agent.state["appointment_confirmed"] = True
-                hospital_agent.state["got_appointment_date"] = True
-                hospital_agent.state["got_appointment_time"] = True
-                hospital_agent.state["got_doctor_name"] = True
-            else:
-                # For real-world implementation, we'd handle this differently
-                # But for now, use a mock call similar to above, even in non-mock mode
-                # since we don't have real hospitals to call yet
-                logger.info(f"Simulating hospital conversation with {hospital_display} (non-mock mode)")
-                
-                # Simulate a basic conversation to get an appointment
-                hospital_agent.state["appointment_confirmed"] = True
-                hospital_agent.state["got_appointment_date"] = True
-                hospital_agent.state["got_appointment_time"] = True
-                hospital_agent.state["got_doctor_name"] = True
-                
-                hospital_agent.appointment_info = {
-                    "date": "tomorrow",
-                    "time": "3:00 PM",
-                    "doctor": "Dr. Johnson",
-                    "hospital_name": hospital_name,
-                    "appointment_confirmed": True
-                }
-            
-            # Get the final appointment details
-            appointment_details = hospital_agent.appointment_info
-            
-            # End the hospital call
-            if hospital_call_sid in self.active_calls:
-                # Update the call record
-                self.memory.update_call_record(
-                    self.active_calls[hospital_call_sid]["call_record_id"],
-                    status="completed",
-                    end_time=datetime.utcnow(),
-                    appointment_date=appointment_details.get("date"),
-                    appointment_time=appointment_details.get("time"),
-                    doctor_name=appointment_details.get("doctor"),
-                    summary="Appointment scheduled"
-                )
-                
-                # Remove from active calls
-                del self.active_calls[hospital_call_sid]
-            
-            # Return the appointment details
-            return appointment_details
+            # In a real environment, the call will proceed asynchronously and the
+            # process_hospital_message method will be called for each message
+            # For now, just return empty details - they'll be filled in by the webhook
+            return None
             
         except Exception as e:
-            logger.error(f"Error in outbound hospital call: {e}")
+            logger.error(f"Error making hospital call: {e}")
             return None
     
     def process_hospital_message(self, call_sid, message):
         """
-        Process a message from a hospital receptionist during an active call.
+        Process a message from a hospital during an active call.
         
         Args:
             call_sid: The Vapi call identifier
-            message: The receptionist's message
+            message: The hospital's message
             
         Returns:
             dict: Response for Vapi
         """
         if call_sid not in self.active_calls:
-            logger.error(f"Received hospital message for unknown call: {call_sid}")
+            logger.error(f"Received message for unknown hospital call: {call_sid}")
             return {"error": "Unknown call"}
         
         call_info = self.active_calls[call_sid]
-        phone_number = call_info["phone_number"]
         
         # Generate response using hospital agent
         agent = call_info["agent"]
@@ -389,178 +287,109 @@ class VoiceAssistant:
         # Save the conversation history
         self.save_conversation_history(call_sid, "hospital", message, response)
         
-        # Check if appointment is confirmed
-        if agent.state["appointment_confirmed"]:
-            # Get appointment details
-            appointment_details = agent.get_appointment_details()
-            
-            # Add patient info for SMS
-            if appointment_details and "patient_info" in call_info:
-                appointment_details["patient_name"] = call_info["patient_info"].get("name", "Patient")
-            
-            # Update call record with appointment details
-            if call_info["call_record_id"] and appointment_details:
-                self.memory.update_call_record(
-                    call_info["call_record_id"],
-                    status="completed",
-                    end_time=datetime.utcnow(),
-                    summary="Appointment confirmed with hospital",
-                    appointment_date=appointment_details.get("date"),
-                    appointment_time=appointment_details.get("time"),
-                    doctor_name=appointment_details.get("doctor")
+        # Check if we got appointment details
+        appointment_details = agent.get_appointment_details()
+        
+        # If the appointment is confirmed, update the patient and end the call
+        if appointment_details and appointment_details.get("appointment_confirmed"):
+            # Inform the patient
+            patient_call_sid = call_info.get("patient_call_sid")
+            if patient_call_sid and patient_call_sid in self.active_calls:
+                self.telephony.send_message_to_call(
+                    patient_call_sid,
+                    f"Great news! I've confirmed your appointment at {hospital_name} on {appointment_details.get('date')} at {appointment_details.get('time')}. You'll receive a text message confirmation soon."
                 )
             
-            # Send confirmation SMS to patient
-            if appointment_details:
-                self.send_appointment_confirmation(phone_number, appointment_details)
-                
-            # End call gracefully
-            next_steps = "\n\nThank you for scheduling this appointment. I'll send a confirmation to the patient right away."
-            return {"response": response + next_steps, "end_call": True}
+            # Send SMS confirmation
+            patient_phone = call_info.get("patient_phone")
+            if patient_phone:
+                self.send_appointment_confirmation(patient_phone, appointment_details)
+            
+            # Thank the receptionist and end the call
+            return {"response": response, "end_call": True}
         
         return {"response": response}
     
-    def save_conversation_history(self, call_sid, conversation_type, user_message, assistant_response):
+    def handle_call_status_update(self, status_data):
+        """
+        Handle call status update from Vapi.
+        
+        Args:
+            status_data: Status data from Vapi
+        """
+        call_sid = status_data.get("call_sid")
+        status = status_data.get("status")
+        
+        logger.info(f"Call status update for {call_sid}: {status}")
+        
+        if status == "completed" and call_sid in self.active_calls:
+            call_info = self.active_calls[call_sid]
+            
+            # Update call record in database
+            call_record_id = call_info.get("call_record_id")
+            if call_record_id:
+                self.memory.update_call_record(
+                    call_record_id,
+                    status="completed",
+                    end_time=datetime.utcnow()
+                )
+            
+            # Clean up active calls
+            del self.active_calls[call_sid]
+            logger.info(f"Removed call {call_sid} from active calls")
+    
+    def save_conversation_history(self, call_sid, role, message, response):
         """
         Save conversation history to the database.
         
         Args:
             call_sid: The Vapi call identifier
-            conversation_type: Type of conversation ('patient' or 'hospital')
-            user_message: Message from the user
-            assistant_response: Response from the assistant
+            role: The role of the speaker ("patient" or "hospital")
+            message: The message
+            response: The response
         """
+        if call_sid not in self.active_calls:
+            logger.error(f"Cannot save conversation history for unknown call: {call_sid}")
+            return
+        
+        call_info = self.active_calls[call_sid]
+        call_record_id = call_info.get("call_record_id")
+        
+        if not call_record_id:
+            logger.error(f"No call record ID for call {call_sid}")
+            return
+        
+        # Get existing conversation history
+        call_record = self.memory.get_call_record(call_record_id)
+        if not call_record:
+            logger.error(f"Call record not found for ID {call_record_id}")
+            return
+        
+        # Parse existing history or create new
         try:
-            if call_sid not in self.active_calls:
-                logger.error(f"Cannot save history for unknown call: {call_sid}")
-                return
-                
-            call_info = self.active_calls[call_sid]
-            
-            if not call_info["call_record_id"]:
-                logger.error(f"No call record ID for call: {call_sid}")
-                return
-            
-            # Use the new direct method in memory store to save conversation
-            success = self.memory.save_conversation_history(
-                call_info["call_record_id"],
-                conversation_type,
-                user_message,
-                assistant_response
-            )
-            
-            if success:
-                logger.info(f"Saved conversation history for call {call_sid}")
-            else:
-                logger.error(f"Failed to save conversation history for call {call_sid}")
-                
-            # Also save as structured JSON for better querying
-            self.memory.append_conversation_json(
-                call_info["call_record_id"],
-                conversation_type,
-                user_message,
-                assistant_response
-            )
-            
-        except Exception as e:
-            logger.error(f"Error saving conversation history: {e}")
+            existing_history = json.loads(call_record.conversation_json) if call_record.conversation_json else []
+        except:
+            existing_history = []
+        
+        # Add new messages
+        existing_history.append({
+            "role": role,
+            "text": message,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+        
+        existing_history.append({
+            "role": "tofia",
+            "text": response,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+        
+        # Update the record
+        self.memory.update_call_record(
+            call_record_id,
+            conversation_json=json.dumps(existing_history)
+        )
     
-    def send_appointment_confirmation(self, phone_number, appointment_details):
-        """
-        Send an SMS appointment confirmation to the patient.
-        
-        Args:
-            phone_number: The patient's phone number
-            appointment_details: Dictionary containing appointment details
-        """
-        try:
-            logger.info(f"Sending appointment confirmation SMS to {phone_number}")
-            
-            # Ensure we have the minimum required fields
-            if not phone_number or not appointment_details:
-                logger.error("Cannot send confirmation: Missing phone number or appointment details")
-                return
-                
-            # Prepare appointment details for SMS
-            sms_details = {
-                "patient_name": appointment_details.get("patient_name", appointment_details.get("name", "Patient")),
-                "date": appointment_details.get("date", "the scheduled date"),
-                "time": appointment_details.get("time", "the scheduled time"),
-                "doctor_name": appointment_details.get("doctor", "your doctor"),
-                "hospital_name": appointment_details.get("hospital_name", "the hospital")
-            }
-            
-            # Send the confirmation SMS
-            success = self.sms.send_appointment_confirmation(phone_number, sms_details)
-            
-            if success:
-                logger.info(f"Appointment confirmation sent successfully to {phone_number}")
-            else:
-                logger.error(f"Failed to send appointment confirmation to {phone_number}")
-                
-        except Exception as e:
-            logger.error(f"Error sending appointment confirmation: {e}")
-    
-    def handle_call_status_update(self, status_data):
-        """
-        Handle call status updates from Vapi.
-        
-        Args:
-            status_data: Status data from Vapi webhook
-        """
-        call_sid = status_data.get("call_sid")
-        status = status_data.get("status")
-        
-        logger.info(f"Call {call_sid} status update: {status}")
-        
-        if status == "completed" and call_sid in self.active_calls:
-            call_info = self.active_calls[call_sid]
-            
-            # Update call record if it exists
-            if call_info["call_record_id"]:
-                self.memory.update_call_record(
-                    call_info["call_record_id"],
-                    status="completed",
-                    end_time=datetime.utcnow()
-                )
-            
-            # Clean up active call
-            del self.active_calls[call_sid]
-
-    def _simulate_hospital_appointment(self, phone_number, patient_info):
-        """
-        Simulate a hospital appointment scheduling (fallback method).
-        
-        Args:
-            phone_number: The patient's phone number
-            patient_info: Information about the patient
-        """
-        logger.info(f"Simulating hospital appointment for {patient_info.get('name', 'patient')}")
-        
-        # Create outbound call record
-        call_record = self.memory.create_call_record(phone_number, "outbound")
-        
-        # Simulate hospital conversation
-        appointment_details = self.telephony.simulate_hospital_conversation(patient_info)
-        
-        # Add patient name to appointment details for SMS
-        appointment_details["patient_name"] = patient_info.get("name", "Patient")
-        
-        # Update call record with appointment details
-        if call_record:
-            self.memory.update_call_record(
-                call_record.id,
-                status="completed",
-                end_time=datetime.utcnow(),
-                summary="Appointment scheduled (simulated)",
-                appointment_date=appointment_details.get("date"),
-                appointment_time=appointment_details.get("time"),
-                doctor_name=appointment_details.get("doctor_name")
-            )
-        
-        # Send SMS confirmation to patient
-        self.send_appointment_confirmation(phone_number, appointment_details)
-
     def update_caller_info(self, phone_number, patient_info):
         """
         Update caller information in the database.
@@ -568,45 +397,62 @@ class VoiceAssistant:
         Args:
             phone_number: The caller's phone number
             patient_info: Dictionary containing patient information
-            
-        Returns:
-            bool: Success status of the update
         """
-        try:
-            if not phone_number or not patient_info:
-                logger.warning("Cannot update caller info: missing data")
-                return False
-            
-            update_fields = {}
-            
-            # Map patient info fields to database fields
-            field_mappings = {
-                "name": "name",
-                "dob": "date_of_birth",
-                "insurance": "insurance_provider",
-                "insurance_id": "insurance_id",
-                "address": "address",
-                "city": "city",
-                "state": "state",
-                "zip_code": "zip_code"
-            }
-            
-            # Add only fields that exist in patient_info and have values
-            for patient_field, db_field in field_mappings.items():
-                if patient_field in patient_info and patient_info[patient_field]:
-                    update_fields[db_field] = patient_info[patient_field]
-            
-            # Update the caller information
-            if update_fields:
-                success = self.memory.update_caller(phone_number, **update_fields)
-                if success:
-                    logger.info(f"Updated caller info for {phone_number}")
-                else:
-                    logger.error(f"Failed to update caller info for {phone_number}")
-                return success
-                
-            return True  # No fields to update is still a success
-            
-        except Exception as e:
-            logger.error(f"Error updating caller info: {e}")
-            return False
+        update_dict = {}
+        
+        if patient_info.get("name"):
+            update_dict["name"] = patient_info["name"]
+        
+        if patient_info.get("dob"):
+            update_dict["date_of_birth"] = patient_info["dob"]
+        
+        if patient_info.get("insurance"):
+            update_dict["insurance_provider"] = patient_info["insurance"]
+        
+        if patient_info.get("insurance_id"):
+            update_dict["insurance_id"] = patient_info["insurance_id"]
+        
+        if patient_info.get("address"):
+            update_dict["address"] = patient_info["address"]
+        
+        if patient_info.get("city"):
+            update_dict["city"] = patient_info["city"]
+        
+        if patient_info.get("state"):
+            update_dict["state"] = patient_info["state"]
+        
+        if patient_info.get("zip_code"):
+            update_dict["zip_code"] = patient_info["zip_code"]
+        
+        if update_dict:
+            self.memory.update_caller(phone_number, **update_dict)
+    
+    def send_appointment_confirmation(self, phone_number, appointment_details):
+        """
+        Send appointment confirmation via SMS.
+        
+        Args:
+            phone_number: The patient's phone number
+            appointment_details: Dictionary containing appointment details
+        """
+        if not appointment_details:
+            logger.error("Cannot send confirmation - no appointment details")
+            return
+        
+        caller = self.memory.get_caller(phone_number)
+        if not caller:
+            logger.error(f"Cannot send confirmation - caller not found for {phone_number}")
+            return
+        
+        # Format the appointment confirmation message
+        message = config.APPOINTMENT_CONFIRMATION_TEMPLATE.format(
+            patient_name=caller.name or "Patient",
+            doctor_name=appointment_details.get("doctor", "your doctor"),
+            hospital_name=appointment_details.get("hospital_name", "the hospital"),
+            appointment_date=appointment_details.get("date", "the scheduled date"),
+            appointment_time=appointment_details.get("time", "the scheduled time")
+        )
+        
+        # Send the SMS
+        self.sms.send_sms(phone_number, message)
+        logger.info(f"Sent appointment confirmation SMS to {phone_number}")

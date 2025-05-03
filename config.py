@@ -11,6 +11,7 @@ load_dotenv()
 # API Keys and Credentials
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your_openai_api_key")
 VAPI_API_KEY = os.getenv("VAPI_API_KEY", "your_vapi_api_key")
+VAPI_PHONE_NUMBER_ID = os.getenv("VAPI_PHONE_NUMBER_ID", "your_vapi_phone_number_id")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "your_twilio_sid")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "your_twilio_token")
 
@@ -31,7 +32,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///tofia.db")
 
 # Server Configuration
 HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", "8000"))
+PORT = int(os.getenv("PORT", "8080"))
 
 # Webhook URLs
 WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", f"http://{HOST}:{PORT}")

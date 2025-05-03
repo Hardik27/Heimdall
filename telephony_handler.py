@@ -12,143 +12,26 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Force mock mode to avoid Vapi SDK pydantic compatibility issues
-VAPI_SDK_AVAILABLE = False
-logger.warning("Forcing mock implementation to avoid Vapi SDK compatibility issues")
-
-# Skip Vapi SDK import attempt completely
-# Define mock Vapi class directly
-class MockVapi:
-    """Mock implementation of Vapi SDK client."""
-
-    class Calls:
-        def __init__(self):
-            self.active_calls = {}
-            
-        def create(self, to=None, from_=None, webhook_url=None, context=None, **kwargs):
-            """
-            Legacy method for creating an outbound call.
-            For compatibility with old code.
-            
-            Args:
-                to: The phone number to call
-                from_: The phone number to call from
-                webhook_url: The URL to call when events happen
-                context: Additional context for the call
-                
-            Returns:
-                dict: A mock call response with call_sid
-            """
-            call_sid = f"mock-sid-{int(time.time())}"
-            logger.info(f"MOCK: Created outbound call to {to} with SID {call_sid}")
-            self.active_calls[call_sid] = {
-                "to": to,
-                "from": from_,
-                "status": "in-progress",
-                "created_at": datetime.now().isoformat(),
-                "context": context or {}
-            }
-            return {"call_sid": call_sid, "status": "queued"}
-        
-        def get(self, call_sid):
-            """
-            Get information about a call.
-            
-            Args:
-                call_sid: The call SID
-                
-            Returns:
-                dict: Call information
-            """
-            if call_sid in self.active_calls:
-                return self.active_calls[call_sid]
-            return {"error": "Call not found", "status": "failed"}
-        
-        def send_message(self, call_sid, text):
-            """
-            Send a message to a call.
-            
-            Args:
-                call_sid: The call SID
-                text: The text message to send
-                
-            Returns:
-                dict: Response with success status
-            """
-            logger.info(f"MOCK: Sent message to call {call_sid}: {text}")
-            return {"success": True, "message": "Message sent"}
-        
-        def get_transcript(self, call_sid):
-            """
-            Get the transcript for a call.
-            
-            Args:
-                call_sid: The call SID
-                
-            Returns:
-                dict: Transcript information
-            """
-            logger.info(f"MOCK: Retrieved transcript for call {call_sid}")
-            return {
-                "call_sid": call_sid,
-                "transcript": [
-                    {"speaker": "assistant", "text": "Hello, how can I help you today?"},
-                    {"speaker": "human", "text": "I'd like to schedule a doctor's appointment."},
-                    {"speaker": "assistant", "text": "I can help with that. What kind of appointment do you need?"}
-                ]
-            }
-        
-        def end(self, call_sid):
-            """
-            End a call.
-            
-            Args:
-                call_sid: The call SID
-                
-            Returns:
-                bool: Success status
-            """
-            if call_sid in self.active_calls:
-                self.active_calls[call_sid]["status"] = "completed"
-                logger.info(f"MOCK: Ended call {call_sid}")
-                return True
-            logger.warning(f"MOCK: Tried to end non-existent call {call_sid}")
-            return False
+# Try to import Vapi SDK but don't fail if not available
+try:
+    import vapi
+    VAPI_SDK_AVAILABLE = True
+    logger.info("Vapi SDK imported successfully")
+except ImportError:
+    VAPI_SDK_AVAILABLE = False
+    logger.warning("Vapi SDK not found. Using fallback implementation for local development.")
     
-    class Client:
-        def __init__(self, api_key=None):
-            self.api_key = api_key
-            self.calls = MockVapi.Calls()
+    # Define a MockVapi class that works with our custom agents
+    class MockVapi:
+        """Fallback implementation of Vapi SDK client for local development."""
         
-        def create_phone_call(self, **kwargs):
-            """
-            Create an outbound phone call according to Vapi documentation.
-            
-            Args:
-                to (str): The phone number to call
-                from (str): The phone number to call from
-                webhook_url (str): The URL to receive events
-                assistant (dict): Assistant configuration
-                metadata (dict, optional): Additional context for the call
-                
-            Returns:
-                object: A mock response object with call_id
-            """
-            call_id = f"mock-call-{int(time.time())}"
-            logger.info(f"MOCK: Created outbound call to {kwargs.get('to')} with ID {call_id}")
-            return {"call_id": call_id, "status": "queued"}
-
-# Create an instance of MockVapi for use by the application
-class MockVapiInstance:
-    def __init__(self):
-        pass
+        class Client:
+            def __init__(self, api_key=None):
+                self.api_key = api_key
+                logger.info("Initialized MockVapi Client with API key")
     
-    def Client(self, api_key=None):
-        return MockVapi.Client(api_key)
-
-# Use the MockVapiInstance for all operations
-vapi = MockVapiInstance()
-
+    # Use the mock class as the vapi module when not available
+    vapi = MockVapi
 
 class TelephonyHandler:
     """Handles inbound and outbound calls through Vapi.ai."""
@@ -156,7 +39,7 @@ class TelephonyHandler:
     def __init__(self):
         """Initialize the Vapi client."""
         self.vapi_client = vapi.Client(config.VAPI_API_KEY)
-        self.api_base_url = "https://api.vapi.ai/call"  # Direct API endpoint for fallback
+        self.api_base_url = "https://api.vapi.ai/call"  # Direct API endpoint
     
     def handle_inbound_call(self, call_data):
         """
@@ -168,21 +51,34 @@ class TelephonyHandler:
         Returns:
             dict: Response for Vapi containing instructions
         """
-        call_sid = call_data.get("call_sid")
-        phone_number = call_data.get("from")
+        logger.info(f"Handling incoming call from {call_data.get('from', 'unknown')}")
         
-        logger.info(f"Handling inbound call from {phone_number}, SID: {call_sid}")
-        
-        # Return configuration for Vapi
-        return {
-            "assistant_id": "patient_assistant",  # ID for patient persona in Vapi
-            "config": {
-                "temperature": config.TEMPERATURE,
-                "max_tokens": config.MAX_TOKENS,
-                "first_message": "Hello, this is Tofia, your healthcare assistant. How can I help you today?",
-                "webhook_url": f"{config.WEBHOOK_BASE_URL}/api/patient_conversation",
+        # Updated configuration to use Vapi's built-in LLM
+        response = {
+            # Configure the assistant to use Vapi's built-in LLM
+            "assistant": {
+                "name": "Tofia Health Assistant",
+                "firstMessage": "Hello, this is Tofia Health Assistant. How can I help you today?",
+                "voiceId": "shimmer"  # You can choose a different voice if preferred
+            },
+            # Still define functions for specific actions if needed
+            "functions": [
+                {
+                    "name": "transfer_to_webhook",
+                    "description": "Transfer control to our custom webhook",
+                    "parameters": {}
+                }
+            ],
+            # We still want to receive updates for tracking purposes
+            "statusCallback": f"{config.WEBHOOK_BASE_URL}/call_status",
+            "recording": {
+                "enabled": True
             }
+            # Remove the disableAssistant flag
         }
+        
+        logger.info(f"Returning Vapi configuration: {json.dumps(response, indent=2)}")
+        return response
     
     def place_outbound_call(self, phone_number, context=None):
         """
@@ -197,34 +93,52 @@ class TelephonyHandler:
         """
         logger.info(f"Placing outbound call to {phone_number}")
         
-        # In mock mode, just return a fake call SID
-        if hasattr(config, 'MOCK_MODE') and config.MOCK_MODE:
-            fake_call_sid = f"MOCK_CALL_{int(time.time())}"
-            logger.info(f"MOCK MODE: Simulated outbound call with SID: {fake_call_sid}")
-            return {"call_sid": fake_call_sid, "status": "queued"}
+        # If we're in fallback mode, return a mock call_sid
+        if not VAPI_SDK_AVAILABLE:
+            mock_call_sid = f"MOCK_CALL_{int(time.time())}"
+            logger.info(f"Fallback mode: Generating mock call SID: {mock_call_sid}")
+            return {"call_sid": mock_call_sid, "status": "queued"}
         
         try:
-            # Make the API call to Vapi
+            # Make the API call to Vapi with updated structure
             url = "https://api.vapi.ai/call/phone"
             headers = {
                 "Authorization": f"Bearer {config.VAPI_API_KEY}",
                 "Content-Type": "application/json"
             }
             
-            # Use the most basic format possible
+            # Updated configuration for the outbound call to use Vapi's built-in LLM
             data = {
-                "assistantId": "df614dd4-b4ef-4107-91c9-5fe855949c7b",
-                "phoneNumberId": "70cedc36-4d83-4256-afda-69f282085f10",
+                "phoneNumberId": config.VAPI_PHONE_NUMBER_ID,
                 "customer": {
-                    "number": phone_number  # Use the phone number passed to the function instead of hardcoding
+                    "number": phone_number
+                },
+                # Configure the assistant to use Vapi's built-in LLM
+                "assistant": {
+                    "name": "Tofia Health Assistant",
+                    "firstMessage": "Hello, this is Tofia Health Assistant. How can I help you today?",
+                    "voiceId": "shimmer"  # You can choose a different voice if preferred
+                },
+                # Still define functions for specific actions if needed
+                "functions": [
+                    {
+                        "name": "transfer_to_webhook",
+                        "description": "Transfer control to our custom webhook",
+                        "parameters": {}
+                    }
+                ],
+                "statusCallback": f"{config.WEBHOOK_BASE_URL}/call_status",
+                "recording": {
+                    "enabled": True
                 }
+                # Remove the disableAssistant flag
             }
             
             # Add metadata if context is provided
             if context:
                 data["metadata"] = context
             
-            logger.info(f"Making Vapi API call with payload: {data}")
+            logger.info(f"Making Vapi API call with payload: {json.dumps(data, indent=2)}")
             response = requests.post(url, headers=headers, json=data)
             
             if response.status_code == 200:
@@ -252,28 +166,32 @@ class TelephonyHandler:
         """
         logger.info(f"Sending message to call {call_sid}: {message[:30]}...")
         
-        # In mock mode, just log the message
-        if hasattr(config, 'MOCK_MODE') and config.MOCK_MODE:
-            logger.info(f"MOCK MODE: Message to call {call_sid}: {message}")
+        # In fallback mode, just log the message
+        if not VAPI_SDK_AVAILABLE:
+            logger.info(f"Fallback mode: Would send message to call {call_sid}: {message[:100]}")
             return True
         
         try:
-            # Make the API call to Vapi
-            url = f"https://api.vapi.ai/call/{call_sid}/send-text"
+            # Use Vapi API to send a message to the call
+            url = f"{self.api_base_url}/{call_sid}/send-message"
             headers = {
                 "Authorization": f"Bearer {config.VAPI_API_KEY}",
                 "Content-Type": "application/json"
             }
-            data = {"text": message}
+            
+            data = {
+                "content": message
+            }
             
             response = requests.post(url, headers=headers, json=data)
             
             if response.status_code == 200:
-                logger.info(f"Message sent successfully to call {call_sid} via direct API")
+                logger.info(f"Message sent successfully to call {call_sid}")
                 return True
             else:
-                logger.error(f"Failed to send message to call {call_sid}: {response.text}")
+                logger.error(f"Failed to send message: {response.status_code} - {response.text}")
                 return False
+                
         except Exception as e:
             logger.error(f"Error sending message to call: {e}")
             return False
@@ -288,29 +206,35 @@ class TelephonyHandler:
         Returns:
             list: List of transcript messages if successful, empty list otherwise
         """
-        if not call_sid:
-            logger.error("Cannot get transcript: 'call_sid' is required")
+        logger.info(f"Retrieving transcript for call {call_sid}")
+        
+        # In fallback mode, return an empty transcript
+        if not VAPI_SDK_AVAILABLE:
+            logger.info(f"Fallback mode: No transcript available for call {call_sid}")
             return []
-            
+        
         try:
-            # Make the API call to Vapi
+            # Use Vapi API to get the transcript
+            url = f"{self.api_base_url}/{call_sid}/transcript"
             headers = {
-                "Authorization": f"Bearer {config.VAPI_API_KEY}"
+                "Authorization": f"Bearer {config.VAPI_API_KEY}",
+                "Content-Type": "application/json"
             }
-            response = requests.get(
-                f"{self.api_base_url}/{call_sid}/transcript", 
-                headers=headers
-            )
+            
+            response = requests.get(url, headers=headers)
             
             if response.status_code == 200:
-                return response.json().get('messages', [])
+                transcript_data = response.json()
+                logger.info(f"Retrieved transcript for call {call_sid}")
+                return transcript_data.get("messages", [])
             else:
-                logger.error(f"API transcript retrieval failed: {response.status_code} - {response.text}")
+                logger.error(f"Failed to get transcript: {response.status_code} - {response.text}")
                 return []
+                
         except Exception as e:
-            logger.error(f"Error retrieving call transcript: {e}")
+            logger.error(f"Error getting call transcript: {e}")
             return []
-            
+    
     def end_call(self, call_sid):
         """
         End an active call.
@@ -321,63 +245,30 @@ class TelephonyHandler:
         Returns:
             bool: Success status of the operation
         """
-        if not call_sid:
-            logger.error("Cannot end call: 'call_sid' is required")
-            return False
-            
+        logger.info(f"Ending call {call_sid}")
+        
+        # In fallback mode, just log the action
+        if not VAPI_SDK_AVAILABLE:
+            logger.info(f"Fallback mode: Would end call {call_sid}")
+            return True
+        
         try:
-            # Make the API call to Vapi
+            # Use Vapi API to end the call
+            url = f"{self.api_base_url}/{call_sid}/hang-up"
             headers = {
-                "Authorization": f"Bearer {config.VAPI_API_KEY}"
+                "Authorization": f"Bearer {config.VAPI_API_KEY}",
+                "Content-Type": "application/json"
             }
-            response = requests.post(
-                f"{self.api_base_url}/{call_sid}/end", 
-                headers=headers
-            )
+            
+            response = requests.post(url, headers=headers)
             
             if response.status_code == 200:
-                logger.info(f"Call ended via API: {call_sid}")
+                logger.info(f"Successfully ended call {call_sid}")
                 return True
             else:
-                logger.error(f"API call end failed: {response.status_code} - {response.text}")
+                logger.error(f"Failed to end call: {response.status_code} - {response.text}")
                 return False
+                
         except Exception as e:
             logger.error(f"Error ending call: {e}")
             return False
-    
-    def simulate_hospital_conversation(self, patient_info):
-        """
-        Simulate a conversation with a hospital receptionist for testing purposes.
-        
-        Args:
-            patient_info: Information about the patient
-            
-        Returns:
-            dict: Simulated appointment details
-        """
-        logger.info("Simulating hospital conversation")
-        
-        # Create hospital agent
-        from conversation_agents import HospitalAgent
-        hospital_agent = HospitalAgent(patient_info)
-        
-        # Simulate receptionist responses
-        responses = [
-            "Hello, General Hospital reception, how can I help you?",
-            f"Alright, I can help schedule an appointment for {patient_info.get('name')}. What's the reason for the visit?",
-            f"I see. And what's the patient's date of birth and insurance provider?",
-            "We have an opening tomorrow at 2:30 PM with Dr. Smith or Friday at 10:00 AM with Dr. Johnson. Which would work better?",
-            "Great, I've scheduled the appointment with Dr. Smith for tomorrow at 2:30 PM. Is there anything else you need?"
-        ]
-        
-        # Process each response
-        for response in responses:
-            hospital_agent.generate_response(response)
-        
-        # Return simulated appointment details
-        return {
-            "date": "tomorrow",
-            "time": "2:30 PM",
-            "doctor_name": "Dr. Smith",
-            "patient_name": patient_info.get("name", "Patient")
-        }
