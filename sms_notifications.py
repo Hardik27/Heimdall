@@ -67,6 +67,7 @@ class SMSNotifier:
             message_body = config.APPOINTMENT_CONFIRMATION_TEMPLATE.format(
                 patient_name=appointment_details.get("patient_name", "Patient"),
                 doctor_name=appointment_details.get("doctor_name", "your doctor"),
+                hospital_name=appointment_details.get("hospital_name", "the hospital"),
                 appointment_date=appointment_details.get("date", "the scheduled date"),
                 appointment_time=appointment_details.get("time", "the scheduled time")
             )

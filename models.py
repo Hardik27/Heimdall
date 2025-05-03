@@ -19,6 +19,11 @@ class Caller(Base):
     name = Column(String(100), nullable=True)
     date_of_birth = Column(String(10), nullable=True)  # Format: YYYY-MM-DD
     insurance_provider = Column(String(100), nullable=True)
+    insurance_id = Column(String(50), nullable=True)
+    address = Column(String(200), nullable=True)
+    city = Column(String(50), nullable=True)
+    state = Column(String(2), nullable=True)
+    zip_code = Column(String(10), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -41,6 +46,7 @@ class CallRecord(Base):
     end_time = Column(DateTime, nullable=True)
     summary = Column(Text, nullable=True)
     status = Column(String(20), default="in_progress")  # in_progress, completed, failed
+    conversation_json = Column(Text, nullable=True)  # JSON string of conversation history
     
     # For appointment calls
     appointment_date = Column(String(10), nullable=True)  # Format: YYYY-MM-DD
@@ -53,6 +59,22 @@ class CallRecord(Base):
     
     def __repr__(self):
         return f"<CallRecord(id={self.id}, call_type='{self.call_type}', status='{self.status}')>"
+
+
+class Hospital(Base):
+    """Model representing a hospital that can be called for appointments."""
+    __tablename__ = 'hospitals'
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    phone_number = Column(String(20), nullable=False)
+    zip_code = Column(String(10), nullable=False, index=True)
+    address = Column(String(200), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<Hospital(id={self.id}, name='{self.name}', zip_code='{self.zip_code}')>"
 
 
 # Database setup functions

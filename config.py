@@ -23,6 +23,9 @@ GPT_MODEL = os.getenv("GPT_MODEL", "gpt-4")
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1000"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 
+# Mock Mode (for testing without using real APIs)
+MOCK_MODE = os.getenv("MOCK_MODE", "false").lower() == "true"
+
 # Database Configuration
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///tofia.db")
 
@@ -37,7 +40,7 @@ CALL_STATUS_WEBHOOK = f"{WEBHOOK_BASE_URL}/api/call_status"
 
 # SMS Templates
 APPOINTMENT_CONFIRMATION_TEMPLATE = """
-Hi {patient_name}, your appointment has been scheduled with {doctor_name} on {appointment_date} at {appointment_time}. 
+Hi {patient_name}, your appointment has been scheduled with {doctor_name} at {hospital_name} on {appointment_date} at {appointment_time}. 
 Please arrive 15 minutes early. Reply YES to confirm or call us for any changes.
 - Tofia Health Assistant
 """

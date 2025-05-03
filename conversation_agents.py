@@ -155,6 +155,8 @@ class PatientAgent(ConversationAgent):
             "got_name": False,
             "got_dob": False,
             "got_insurance": False,
+            "got_insurance_id": False,
+            "got_address": False,
             "got_appointment_reason": False,
             "got_symptoms": False,
             "ready_for_hospital_call": False
@@ -163,6 +165,11 @@ class PatientAgent(ConversationAgent):
             "name": None,
             "dob": None,
             "insurance": None,
+            "insurance_id": None,
+            "address": None,
+            "city": None,
+            "state": None,
+            "zip_code": None,
             "appointment_reason": None,
             "symptoms": None,
             "preferred_timeframe": None
@@ -248,89 +255,203 @@ class PatientAgent(ConversationAgent):
     def _update_state(self, response):
         """
         Update the state based on the current response.
+        This looks for patterns in the conversation to determine what information has been collected.
         
         Args:
-            response: The assistant's response
+            response: The current response from the agent
         """
-        # In mock mode, state is updated by the _generate_mock_response method
-        if hasattr(config, 'MOCK_MODE') and config.MOCK_MODE:
-            return
+        # Get combined conversation history as a single string for pattern matching
+        full_history = " ".join([msg["content"] for msg in self.conversation_history])
+        
+        # Check for name
+        if not self.state["got_name"]:
+            name_patterns = [
+                r"(?i)my name is ([A-Za-z\s\-']+)",
+                r"(?i)i(?:'|\s+)am ([A-Za-z\s\-']+)",
+                r"(?i)this is ([A-Za-z\s\-']+)",
+                r"(?i)call me ([A-Za-z\s\-']+)",
+                r"(?i)patient(?:'s|s|\s+)name(?:\s+is|\s*:\s*)([A-Za-z\s\-']+)"
+            ]
             
-        try:
-            # Check for name
-            if not self.state["got_name"] and len(self.conversation_history) >= 2:
-                patient_message = self.conversation_history[-2]["content"].lower()
-                # More robust name detection
-                name_patterns = ["my name is", "name's", "i'm ", "i am ", "call me"]
-                for pattern in name_patterns:
-                    if pattern in patient_message:
-                        words = patient_message.split(pattern)[1].strip().split()
-                        # Extract up to 3 words as the name
-                        potential_name = " ".join(words[:3]).rstrip(".,!?").title()
-                        if potential_name and len(potential_name) > 1:
-                            self.patient_info["name"] = potential_name
-                            self.state["got_name"] = True
-                            logger.info(f"Extracted patient name: {potential_name}")
-                            break
+            for pattern in name_patterns:
+                name_match = re.search(pattern, full_history)
+                if name_match:
+                    potential_name = name_match.group(1).strip()
+                    # Perform basic validation to avoid catching non-name responses
+                    if len(potential_name.split()) <= 4 and len(potential_name) > 2:
+                        self.patient_info["name"] = potential_name
+                        self.state["got_name"] = True
+                        logger.info(f"Detected patient name: {potential_name}")
+                        break
+        
+        # Check for date of birth
+        if not self.state["got_dob"]:
+            dob_patterns = [
+                r"(?i)born (?:on\s+)?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+                r"(?i)birth(?:day|date)(?:\s+is|\s*:\s*)?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+                r"(?i)dob(?:\s+is|\s*:\s*)?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+                r"(?i)date of birth(?:\s+is|\s*:\s*)?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+                r"(?i)i was born (?:on\s+)?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+                r"(?i)(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})"  # Last resort, just try to find a date format
+            ]
             
-            # Check for DOB
-            if not self.state["got_dob"] and len(self.conversation_history) >= 2:
-                patient_message = self.conversation_history[-2]["content"].lower()
-                dob_patterns = ["birth", "born", "dob", "birthday"]
-                if any(pattern in patient_message for pattern in dob_patterns):
-                    # This extracts dates in various formats
-                    import re
-                    # Match various date formats
-                    date_patterns = [
-                        r'\b\d{1,2}/\d{1,2}/\d{2,4}\b',  # MM/DD/YYYY or DD/MM/YYYY
-                        r'\b\d{1,2}-\d{1,2}-\d{2,4}\b',   # MM-DD-YYYY or DD-MM-YYYY
-                        r'\b(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[.,\s]+\d{1,2}(?:st|nd|rd|th)?[.,\s]+\d{2,4}\b',  # Month DD, YYYY
-                    ]
-                    for pattern in date_patterns:
-                        matches = re.findall(pattern, patient_message, re.IGNORECASE)
-                        if matches:
-                            self.patient_info["dob"] = matches[0]
-                            self.state["got_dob"] = True
-                            logger.info(f"Extracted patient DOB: {matches[0]}")
-                            break
+            for pattern in dob_patterns:
+                dob_match = re.search(pattern, full_history)
+                if dob_match:
+                    potential_dob = dob_match.group(1).strip()
+                    self.patient_info["dob"] = potential_dob
+                    self.state["got_dob"] = True
+                    logger.info(f"Detected patient DOB: {potential_dob}")
+                    break
+        
+        # Check for insurance
+        if not self.state["got_insurance"]:
+            insurance_patterns = [
+                r"(?i)(?:my\s+)?insurance(?:\s+is|\s+provider(?:\s+is)?|\s*:\s*)?\s*([A-Za-z\s\-']+(?:health|insurance|medical|blue|shield|cross|aetna|cigna|united|humana|kaiser|medicaid|medicare)(?:\s*[A-Za-z\s\-']+)?)",
+                r"(?i)(?:i have|i('|'|\s+)m on|i use)\s+([A-Za-z\s\-']+(?:health|insurance|medical|blue|shield|cross|aetna|cigna|united|humana|kaiser|medicaid|medicare)(?:\s*[A-Za-z\s\-']+)?)",
+                r"(?i)(?:with|through)\s+([A-Za-z\s\-']+(?:health|insurance|medical|blue|shield|cross|aetna|cigna|united|humana|kaiser|medicaid|medicare)(?:\s*[A-Za-z\s\-']+)?)"
+            ]
             
-            # Check for insurance
-            if not self.state["got_insurance"] and len(self.conversation_history) >= 2:
-                patient_message = self.conversation_history[-2]["content"].lower()
-                insurance_patterns = ["insurance", "insured", "coverage", "plan", "provider"]
-                if any(pattern in patient_message for pattern in insurance_patterns):
-                    # Simplified extraction of insurance information
-                    words = patient_message.split()
-                    for idx, word in enumerate(words):
-                        if any(pattern in word for pattern in insurance_patterns) and idx < len(words) - 1:
-                            # Take words after the insurance keyword, up to 5 words
-                            potential_insurance = " ".join(words[idx+1:idx+6]).rstrip(".,!?")
-                            if potential_insurance:
-                                self.patient_info["insurance"] = potential_insurance
-                                self.state["got_insurance"] = True
-                                logger.info(f"Extracted insurance info: {potential_insurance}")
-                                break
-                                
-            # Check for appointment reason
-            if not self.state["got_appointment_reason"] and len(self.conversation_history) >= 2:
-                patient_message = self.conversation_history[-2]["content"].lower()
-                reason_patterns = ["reason", "appointment for", "need to see", "problem", "issue", "symptom", "checkup"]
-                if any(pattern in patient_message for pattern in reason_patterns):
-                    # Extract the appointment reason
-                    self.patient_info["appointment_reason"] = patient_message
-                    self.state["got_appointment_reason"] = True
-                    logger.info(f"Extracted appointment reason")
+            for pattern in insurance_patterns:
+                insurance_match = re.search(pattern, full_history)
+                if insurance_match:
+                    potential_insurance = insurance_match.group(1).strip()
+                    if len(potential_insurance) > 2:
+                        self.patient_info["insurance"] = potential_insurance
+                        self.state["got_insurance"] = True
+                        logger.info(f"Detected patient insurance: {potential_insurance}")
+                        break
+                        
+        # Check for insurance ID
+        if not self.state["got_insurance_id"]:
+            insurance_id_patterns = [
+                r"(?i)(?:insurance|policy|member|id)(?:\s+id|\s+card|\s+number)?(?:\s+is|\s*:\s*)?\s*([A-Za-z0-9\-]+)",
+                r"(?i)(?:my\s+)?(?:insurance|policy|member|id)(?:\s+id|\s+card|\s+number)?\s+(?:is|=)\s*([A-Za-z0-9\-]+)",
+                r"(?i)(?:insurance|policy|member|id)(?:\s+id|\s+card|\s+number)?[:\s]+([A-Za-z0-9\-]{5,20})"
+            ]
+            
+            for pattern in insurance_id_patterns:
+                id_match = re.search(pattern, full_history)
+                if id_match:
+                    potential_id = id_match.group(1).strip()
+                    # Basic validation - IDs are typically alphanumeric and at least a few chars
+                    if len(potential_id) >= 4:
+                        self.patient_info["insurance_id"] = potential_id
+                        self.state["got_insurance_id"] = True
+                        logger.info(f"Detected patient insurance ID: {potential_id}")
+                        break
+                        
+        # Check for address information
+        if not self.state["got_address"]:
+            # Address pattern (street address)
+            address_patterns = [
+                r"(?i)(?:my\s+)?address(?:\s+is|\s*:\s*)?\s*([0-9]+\s+[A-Za-z0-9\s\-'.]+(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|way|circle|cir|court|ct|place|pl|terrace|ter)(?:\s+[A-Za-z0-9\s\-'.#]+)?)",
+                r"(?i)(?:i live at|located at)\s+([0-9]+\s+[A-Za-z0-9\s\-'.]+(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|way|circle|cir|court|ct|place|pl|terrace|ter)(?:\s+[A-Za-z0-9\s\-'.#]+)?)"
+            ]
+            
+            for pattern in address_patterns:
+                address_match = re.search(pattern, full_history)
+                if address_match:
+                    self.patient_info["address"] = address_match.group(1).strip()
+                    self.state["got_address"] = True
+                    logger.info(f"Detected patient address: {self.patient_info['address']}")
+                    break
+            
+            # City pattern
+            city_patterns = [
+                r"(?i)(?:in|of|from|city(?:\s+of)?|city(?:\s+is)?:?)\s+([A-Za-z\s\-'.]+),\s*(?:[A-Z]{2}|[A-Za-z]+)",
+                r"(?i)city(?:\s+is|\s*:\s*)?\s*([A-Za-z\s\-'.]+)"
+            ]
+            
+            for pattern in city_patterns:
+                city_match = re.search(pattern, full_history)
+                if city_match:
+                    potential_city = city_match.group(1).strip()
+                    if len(potential_city) > 2 and all(not c.isdigit() for c in potential_city):
+                        self.patient_info["city"] = potential_city
+                        logger.info(f"Detected patient city: {potential_city}")
+                        break
+            
+            # State pattern
+            state_patterns = [
+                r"(?i)[A-Za-z\s\-'.]+,\s*([A-Z]{2})\s*\d{5}",  # City, ST ZIP
+                r"(?i)state(?:\s+is|\s+of|\s*:\s*)?\s*([A-Za-z]{2,14})",
+                r"(?i)in\s+([A-Z]{2})\b"  # In CA
+            ]
+            
+            for pattern in state_patterns:
+                state_match = re.search(pattern, full_history)
+                if state_match:
+                    potential_state = state_match.group(1).strip().upper()
+                    if len(potential_state) == 2 or potential_state.lower() in ['california', 'texas', 'florida', 'new york', 'washington']:
+                        # Convert full state names to abbreviations if needed
+                        state_abbr_map = {
+                            'california': 'CA', 'texas': 'TX', 'florida': 'FL', 
+                            'new york': 'NY', 'washington': 'WA'
+                        }
+                        potential_state = state_abbr_map.get(potential_state.lower(), potential_state)
+                        if len(potential_state) > 2:
+                            potential_state = potential_state[:2].upper()
+                            
+                        self.patient_info["state"] = potential_state
+                        logger.info(f"Detected patient state: {potential_state}")
+                        break
+            
+            # ZIP code pattern
+            zip_patterns = [
+                r"(?i)zip(?:\s+code|\s*:\s*)?\s*(\d{5}(?:-\d{4})?)",
+                r"(?i)[A-Za-z\s\-'.]+,\s*[A-Z]{2}\s*(\d{5}(?:-\d{4})?)"  # City, ST ZIP
+            ]
+            
+            for pattern in zip_patterns:
+                zip_match = re.search(pattern, full_history)
+                if zip_match:
+                    self.patient_info["zip_code"] = zip_match.group(1).strip()
+                    logger.info(f"Detected patient ZIP code: {self.patient_info['zip_code']}")
+                    break
                     
-            # Check if we have enough information to contact the hospital
-            if (self.state["got_name"] and self.state["got_dob"] and 
-                (self.state["got_insurance"] or self.state["got_appointment_reason"]) and
-                not self.state["ready_for_hospital_call"]):
-                self.state["ready_for_hospital_call"] = True
-                logger.info("Patient has provided enough information for hospital call")
-                
-        except Exception as e:
-            logger.error(f"Error in PatientAgent._update_state: {e}")
-            # Don't let an error in state update break the whole flow
+            # If we have at least address and city or state or zip, consider the address information sufficient
+            if self.patient_info["address"] and (self.patient_info["city"] or self.patient_info["state"] or self.patient_info["zip_code"]):
+                self.state["got_address"] = True
+        
+        # Check for appointment reason
+        if not self.state["got_appointment_reason"]:
+            reason_patterns = [
+                r"(?i)(?:appointment for|reason for|need to see|appointment is for|reason is|concerning|regarding|about) ([^.?!]+[.?!])",
+                r"(?i)(?:i have|i('|'|\s+)m on|i use)\s+([^.?!]+[.?!])",
+                r"(?i)(?:symptoms include|symptoms are|problem is|issue is|condition is) ([^.?!]+[.?!])"
+            ]
+            
+            for pattern in reason_patterns:
+                reason_match = re.search(pattern, full_history)
+                if reason_match:
+                    potential_reason = reason_match.group(1).strip()
+                    if len(potential_reason) > 5 and len(potential_reason.split()) > 2:
+                        self.patient_info["appointment_reason"] = potential_reason
+                        self.state["got_appointment_reason"] = True
+                        logger.info(f"Detected appointment reason: {potential_reason}")
+                        break
+        
+        # If we have all essential information, mark as ready for hospital call
+        required_info = ["name", "dob", "insurance", "appointment_reason"]
+        if all(self.patient_info[info] for info in required_info):
+            self.state["ready_for_hospital_call"] = True
+            logger.info("Patient information complete - ready for hospital call")
+            
+        # Debug log the current patient info state
+        logger.debug(f"Current patient info: {self.patient_info}")
+        logger.debug(f"Current state: {self.state}")
+    
+    def get_appointment_details(self):
+        """
+        Get the confirmed appointment details.
+        
+        Returns:
+            dict: The appointment details if confirmed, None otherwise
+        """
+        if self.state["ready_for_hospital_call"]:
+            return self.patient_info
+        return None
 
 
 class HospitalAgent(ConversationAgent):
@@ -424,6 +545,7 @@ class HospitalAgent(ConversationAgent):
     def _update_state(self, response):
         """
         Update the state based on the current response.
+        To be implemented by subclasses.
         
         Args:
             response: The assistant's response
