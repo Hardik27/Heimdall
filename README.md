@@ -71,4 +71,4 @@ pip install -r requirements.txt
 
 ## 🖼 Architecture
 
-![Architecture Diagram](media/Architecture_Diagram.jpg)
+![Architecture Diagram](https://github.com/Hardik27/Tofia/blob/main/media/Architecture_Diagram.jpg)
