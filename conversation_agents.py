@@ -7,6 +7,7 @@ import openai
 import json
 import config
 import prompts
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -255,36 +256,81 @@ class PatientAgent(ConversationAgent):
         if hasattr(config, 'MOCK_MODE') and config.MOCK_MODE:
             return
             
-        # Check for name
-        if not self.state["got_name"] and ("my name is" in self.conversation_history[-2]["content"].lower() or 
-                                         "name's" in self.conversation_history[-2]["content"].lower()):
-            # Extract name from patient message (simplified)
-            patient_message = self.conversation_history[-2]["content"].lower()
-            if "my name is" in patient_message:
-                self.patient_info["name"] = patient_message.split("my name is")[1].strip().split(".")[0].title()
-                self.state["got_name"] = True
-            elif "name's" in patient_message:
-                self.patient_info["name"] = patient_message.split("name's")[1].strip().split(".")[0].title()
-                self.state["got_name"] = True
-        
-        # Check for DOB
-        if not self.state["got_dob"] and "birth" in self.conversation_history[-2]["content"].lower():
-            # This is a simplified extraction, in reality would use more robust parsing
-            self.state["got_dob"] = True
-        
-        # Check for insurance
-        if not self.state["got_insurance"] and "insurance" in self.conversation_history[-2]["content"].lower():
-            self.state["got_insurance"] = True
-        
-        # Check for appointment reason
-        if not self.state["got_appointment_reason"] and any(word in self.conversation_history[-2]["content"].lower() 
-                                                         for word in ["appointment", "schedule", "see doctor"]):
-            self.state["got_appointment_reason"] = True
-        
-        # Check if ready for hospital call
-        if (self.state["got_name"] and self.state["got_dob"] and 
-            self.state["got_insurance"] and self.state["got_appointment_reason"]):
-            self.state["ready_for_hospital_call"] = True
+        try:
+            # Check for name
+            if not self.state["got_name"] and len(self.conversation_history) >= 2:
+                patient_message = self.conversation_history[-2]["content"].lower()
+                # More robust name detection
+                name_patterns = ["my name is", "name's", "i'm ", "i am ", "call me"]
+                for pattern in name_patterns:
+                    if pattern in patient_message:
+                        words = patient_message.split(pattern)[1].strip().split()
+                        # Extract up to 3 words as the name
+                        potential_name = " ".join(words[:3]).rstrip(".,!?").title()
+                        if potential_name and len(potential_name) > 1:
+                            self.patient_info["name"] = potential_name
+                            self.state["got_name"] = True
+                            logger.info(f"Extracted patient name: {potential_name}")
+                            break
+            
+            # Check for DOB
+            if not self.state["got_dob"] and len(self.conversation_history) >= 2:
+                patient_message = self.conversation_history[-2]["content"].lower()
+                dob_patterns = ["birth", "born", "dob", "birthday"]
+                if any(pattern in patient_message for pattern in dob_patterns):
+                    # This extracts dates in various formats
+                    import re
+                    # Match various date formats
+                    date_patterns = [
+                        r'\b\d{1,2}/\d{1,2}/\d{2,4}\b',  # MM/DD/YYYY or DD/MM/YYYY
+                        r'\b\d{1,2}-\d{1,2}-\d{2,4}\b',   # MM-DD-YYYY or DD-MM-YYYY
+                        r'\b(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[.,\s]+\d{1,2}(?:st|nd|rd|th)?[.,\s]+\d{2,4}\b',  # Month DD, YYYY
+                    ]
+                    for pattern in date_patterns:
+                        matches = re.findall(pattern, patient_message, re.IGNORECASE)
+                        if matches:
+                            self.patient_info["dob"] = matches[0]
+                            self.state["got_dob"] = True
+                            logger.info(f"Extracted patient DOB: {matches[0]}")
+                            break
+            
+            # Check for insurance
+            if not self.state["got_insurance"] and len(self.conversation_history) >= 2:
+                patient_message = self.conversation_history[-2]["content"].lower()
+                insurance_patterns = ["insurance", "insured", "coverage", "plan", "provider"]
+                if any(pattern in patient_message for pattern in insurance_patterns):
+                    # Simplified extraction of insurance information
+                    words = patient_message.split()
+                    for idx, word in enumerate(words):
+                        if any(pattern in word for pattern in insurance_patterns) and idx < len(words) - 1:
+                            # Take words after the insurance keyword, up to 5 words
+                            potential_insurance = " ".join(words[idx+1:idx+6]).rstrip(".,!?")
+                            if potential_insurance:
+                                self.patient_info["insurance"] = potential_insurance
+                                self.state["got_insurance"] = True
+                                logger.info(f"Extracted insurance info: {potential_insurance}")
+                                break
+                                
+            # Check for appointment reason
+            if not self.state["got_appointment_reason"] and len(self.conversation_history) >= 2:
+                patient_message = self.conversation_history[-2]["content"].lower()
+                reason_patterns = ["reason", "appointment for", "need to see", "problem", "issue", "symptom", "checkup"]
+                if any(pattern in patient_message for pattern in reason_patterns):
+                    # Extract the appointment reason
+                    self.patient_info["appointment_reason"] = patient_message
+                    self.state["got_appointment_reason"] = True
+                    logger.info(f"Extracted appointment reason")
+                    
+            # Check if we have enough information to contact the hospital
+            if (self.state["got_name"] and self.state["got_dob"] and 
+                (self.state["got_insurance"] or self.state["got_appointment_reason"]) and
+                not self.state["ready_for_hospital_call"]):
+                self.state["ready_for_hospital_call"] = True
+                logger.info("Patient has provided enough information for hospital call")
+                
+        except Exception as e:
+            logger.error(f"Error in PatientAgent._update_state: {e}")
+            # Don't let an error in state update break the whole flow
 
 
 class HospitalAgent(ConversationAgent):
@@ -386,45 +432,70 @@ class HospitalAgent(ConversationAgent):
         if hasattr(config, 'MOCK_MODE') and config.MOCK_MODE:
             return
             
-        # Look for appointment date in conversation
-        if not self.state["got_appointment_date"] and any(word in self.conversation_history[-2]["content"].lower() 
-                                                       for word in ["schedule", "appointment", "date"]):
-            # This is a simplified extraction, in reality would use more robust parsing like NER
-            self.state["got_appointment_date"] = True
+        try:
+            # Look for appointment date in conversation
+            if not self.state["got_appointment_date"] and len(self.conversation_history) >= 2:
+                patient_message = self.conversation_history[-2]["content"].lower()
+                appointment_date_patterns = ["schedule", "appointment", "date"]
+                if any(pattern in patient_message for pattern in appointment_date_patterns):
+                    # This extracts dates in various formats
+                    import re
+                    # Match various date formats
+                    date_patterns = [
+                        r'\b\d{1,2}/\d{1,2}/\d{2,4}\b',  # MM/DD/YYYY or DD/MM/YYYY
+                        r'\b\d{1,2}-\d{1,2}-\d{2,4}\b',   # MM-DD-YYYY or DD-MM-YYYY
+                        r'\b(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[.,\s]+\d{1,2}(?:st|nd|rd|th)?[.,\s]+\d{2,4}\b',  # Month DD, YYYY
+                    ]
+                    for pattern in date_patterns:
+                        matches = re.findall(pattern, patient_message, re.IGNORECASE)
+                        if matches:
+                            self.appointment_info["date"] = matches[0]
+                            self.state["got_appointment_date"] = True
+                            logger.info(f"Extracted appointment date: {matches[0]}")
+                            break
             
-            # Extract the date from the conversation (simplified)
-            last_message = self.conversation_history[-2]["content"].lower()
-            # Very basic date extraction - in a real system would use a date parser
-            if "on " in last_message and " at " in last_message:
-                try:
-                    date_part = last_message.split("on ")[1].split(" at ")[0].strip()
-                    self.appointment_info["date"] = date_part
-                except:
-                    pass
-        
-        # Look for appointment time
-        if not self.state["got_appointment_time"] and " at " in self.conversation_history[-2]["content"].lower():
-            self.state["got_appointment_time"] = True
+            # Look for appointment time
+            if not self.state["got_appointment_time"] and len(self.conversation_history) >= 2:
+                patient_message = self.conversation_history[-2]["content"].lower()
+                appointment_time_patterns = ["at", "time"]
+                if any(pattern in patient_message for pattern in appointment_time_patterns):
+                    # Extract the time (simplified)
+                    words = patient_message.split()
+                    for idx, word in enumerate(words):
+                        if any(pattern in word for pattern in appointment_time_patterns) and idx < len(words) - 1:
+                            # Take words after the time keyword, up to 5 words
+                            potential_time = " ".join(words[idx+1:idx+6]).rstrip(".,!?")
+                            if potential_time:
+                                self.appointment_info["time"] = potential_time
+                                self.state["got_appointment_time"] = True
+                                logger.info(f"Extracted appointment time: {potential_time}")
+                                break
             
-            # Extract the time (simplified)
-            last_message = self.conversation_history[-2]["content"].lower()
-            if " at " in last_message:
-                try:
-                    time_part = last_message.split(" at ")[1].split(".")[0].strip()
-                    self.appointment_info["time"] = time_part
-                except:
-                    pass
-        
-        # Look for doctor name
-        if not self.state["got_doctor_name"] and "doctor" in self.conversation_history[-2]["content"].lower():
-            self.state["got_doctor_name"] = True
+            # Look for doctor name
+            if not self.state["got_doctor_name"] and len(self.conversation_history) >= 2:
+                patient_message = self.conversation_history[-2]["content"].lower()
+                doctor_name_patterns = ["doctor", "dr."]
+                if any(pattern in patient_message for pattern in doctor_name_patterns):
+                    # Extract doctor name (simplified)
+                    words = patient_message.split()
+                    for idx, word in enumerate(words):
+                        if any(pattern in word for pattern in doctor_name_patterns) and idx < len(words) - 1:
+                            # Take words after the doctor keyword, up to 5 words
+                            potential_doctor = " ".join(words[idx+1:idx+6]).rstrip(".,!?")
+                            if potential_doctor:
+                                self.appointment_info["doctor"] = potential_doctor
+                                self.state["got_doctor_name"] = True
+                                logger.info(f"Extracted doctor name: {potential_doctor}")
+                                break
             
-            # Extract doctor name (simplified)
-            # In a real system would use NER to extract names
-            
-        # Check if appointment is confirmed
-        if (self.state["got_appointment_date"] and self.state["got_appointment_time"]):
-            self.state["appointment_confirmed"] = True
+            # Check if appointment is confirmed
+            if (self.state["got_appointment_date"] and self.state["got_appointment_time"]):
+                self.state["appointment_confirmed"] = True
+                logger.info("Appointment confirmed")
+                
+        except Exception as e:
+            logger.error(f"Error in HospitalAgent._update_state: {e}")
+            # Don't let an error in state update break the whole flow
     
     def get_appointment_details(self):
         """
