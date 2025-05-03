@@ -69,26 +69,6 @@ pip install -r requirements.txt
 
 ---
 
-## Workflow
+## 🖼 Architecture
 
-```mermaid
-flowchart TD
-    Caller((Patient<br/>Phone))
-    VAPI_Tofia["Tofia<br/>(Patient Agent)"]
-    FastAPI["FastAPI<br/>App + DB"]
-    Telephony["TelephonyHandler<br/>place_outbound_call"]
-    VAPI_Riley["Riley<br/>(Hospital Agent)"]
-    Hospital((Hospital<br/>Reception))
-    Twilio["Twilio<br/>SMS"]
-
-    Caller -->|dials| VAPI_Tofia
-    VAPI_Tofia -- "POST /api/incoming_call" --> FastAPI
-    FastAPI -- "Question 1" --> VAPI_Tofia
-    VAPI_Tofia --> Caller
-    Caller -->|answers| VAPI_Tofia
-    VAPI_Tofia -- "POST /api/patient_conversation" --> FastAPI
-    FastAPI -- "after 6 answers" --> Telephony
-    Telephony -- "POST /v1/call/phone" --> VAPI_Riley
-    VAPI_Riley -->|calls| Hospital
-    VAPI_Riley -- "POST /api/hospital_conversation" --> FastAPI
-    FastAPI -->|confirmation| Twilio
+![Architecture Diagram](media/Architecture_Diagram.jpg)
