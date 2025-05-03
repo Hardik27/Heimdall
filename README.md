@@ -71,6 +71,7 @@ pip install -r requirements.txt
 ## 🚀 Run FastAPI and Expose via ngrok
 
 uvicorn app:app --reload
+
 ngrok http 8000
 
 ---
