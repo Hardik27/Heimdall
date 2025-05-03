@@ -22,8 +22,6 @@ Tofia is a FastAPI application that:
 | `update_vapi_webhooks.py`| Script to PATCH VAPI assistants to `custom_server` mode     |
 | `.env.example`          | Template environment config                                  |
 
----
-
 ## 🔐 `.env` Template
 
 ```dotenv
@@ -56,17 +54,13 @@ TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TOFIA_PHONE_NUMBER=<PATIENT_ASSISTANT_PHONE_NUMBER>
 
----
-
 ## ⚙️ Local Setup (Python 3.10+)
 
-```bash
 git clone https://github.com/your-org/tofia.git
 cd tofia
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
----
 
 ## 🖼 Architecture
 
