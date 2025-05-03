@@ -68,6 +68,43 @@ pip install -r requirements.txt
 
 ---
 
+## 🚀 Run FastAPI and Expose via ngrok
+
+uvicorn app:app --reload
+ngrok http 8000
+
+---
+
+## Bind VAPI Assistants to Your Server
+
+### Tofia (Patient Agent)
+curl -X PATCH https://api.vapi.ai/v1/assistants/$PATIENT_ASSISTANT_ID \
+  -H "Authorization: Bearer $VAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "voiceSettings": {
+      "mode": "custom_server",
+      "incomingCallUrl": "'"$NGROK"'/api/incoming_call",
+      "conversationUrl": "'"$NGROK"'/api/patient_conversation",
+      "statusCallbackUrl": "'"$NGROK"'/api/call_status"
+    }
+  }'
+
+### Riley (Hospital Agent)
+curl -X PATCH https://api.vapi.ai/v1/assistants/$HOSPITAL_ASSISTANT_ID \
+  -H "Authorization: Bearer $VAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "voiceSettings": {
+      "mode": "custom_server",
+      "incomingCallUrl": "'"$NGROK"'/api/hospital_conversation",
+      "conversationUrl": "'"$NGROK"'/api/hospital_conversation",
+      "statusCallbackUrl": "'"$NGROK"'/api/call_status"
+    }
+  }'
+
+---
+
 ## 🖼 Architecture
 
 ![Architecture Diagram](https://github.com/Hardik27/Tofia/raw/main/media/Architecture_Diagram.jpg?raw=true)
